@@ -15,6 +15,7 @@ import (
 	"github.com/valyala/fasthttp"
 
 	"github.com/authelia/authelia/v4/internal/configuration/schema"
+	"github.com/authelia/authelia/v4/internal/handlers"
 	"github.com/authelia/authelia/v4/internal/middlewares"
 	"github.com/authelia/authelia/v4/internal/random"
 	"github.com/authelia/authelia/v4/internal/session"
@@ -284,7 +285,40 @@ func NewTemplatedFileOptions(config *schema.Configuration) (opts *TemplatedFileO
 		EndpointsTOTP:          !config.TOTP.Disable,
 		EndpointsDuo:           !config.DuoAPI.Disable,
 		EndpointsOpenIDConnect: !(config.IdentityProviders.OIDC == nil),
-		EndpointsAuthz:         config.Server.Endpoints.Authz,
+		EndpointsAuthz:         map[string]TemplatedFileEndpointsAuthzOption{},
+	}
+
+	for name, endpoint := range config.Server.Endpoints.Authz {
+		var uri string
+
+		switch name {
+		case schema.AuthzEndpointNameLegacy:
+			uri = "/api/verify"
+		default:
+			uri = fmt.Sprintf("/api/authz/%s", name)
+		}
+
+		opt := TemplatedFileEndpointsAuthzOption{
+			Implementation: endpoint.Implementation,
+		}
+
+		for _, strategy := range endpoint.AuthnStrategies {
+			switch strategy.Name {
+			case handlers.AuthnStrategyCookieSession:
+				opt.CookieSession = true
+			case handlers.AuthnStrategyHeaderAuthorization:
+				for _, scheme := range strategy.Schemes {
+					switch strings.ToLower(scheme) {
+					case schema.SchemeBearer:
+						opt.SchemeBearer = true
+					case schema.SchemeBasic:
+						opt.SchemeBasic = true
+					}
+				}
+			}
+		}
+
+		opts.EndpointsAuthz[uri] = opt
 	}
 
 	if config.PrivacyPolicy.Enabled {
@@ -317,7 +351,14 @@ type TemplatedFileOptions struct {
 	EndpointsDuo           bool
 	EndpointsOpenIDConnect bool
 
-	EndpointsAuthz map[string]schema.ServerEndpointsAuthz
+	EndpointsAuthz map[string]TemplatedFileEndpointsAuthzOption
+}
+
+type TemplatedFileEndpointsAuthzOption struct {
+	Implementation string
+	CookieSession  bool
+	SchemeBasic    bool
+	SchemeBearer   bool
 }
 
 // CommonData returns a TemplatedFileCommonData with the dynamic options.
@@ -408,5 +449,5 @@ type TemplatedFileOpenAPIData struct {
 	Duo           bool
 	OpenIDConnect bool
 
-	EndpointsAuthz map[string]schema.ServerEndpointsAuthz
+	EndpointsAuthz map[string]TemplatedFileEndpointsAuthzOption
 }
